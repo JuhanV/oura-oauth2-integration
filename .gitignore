@@ -5,6 +5,7 @@ ENV/
 
 # Environment variables (contains sensitive information)
 .env
+app keys.txt
 
 # Python bytecode
 __pycache__/
