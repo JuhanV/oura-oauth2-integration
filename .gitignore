@@ -1,0 +1,36 @@
+# Python virtual environment
+venv/
+env/
+ENV/
+
+# Environment variables (contains sensitive information)
+.env
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Flask instance folder
+instance/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Local development settings
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Exclude the embedded git repository
+sleepy-panda-tracker/ 

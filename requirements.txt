@@ -1,0 +1,4 @@
+oura==1.3.0
+flask==3.0.2
+python-dotenv==1.0.1
+requests-oauthlib==1.3.1 
