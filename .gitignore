@@ -1,37 +1,45 @@
-# Python virtual environment
-venv/
-env/
-ENV/
-
-# Environment variables (contains sensitive information)
-.env
-app keys.txt
-
-# Python bytecode
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
-
-# Flask instance folder
-instance/
-
-# Distribution / packaging
-dist/
+*.so
+.Python
+env/
 build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
 *.egg-info/
+.installed.cfg
+*.egg
 
-# Local development settings
+# Virtual Environment
+venv/
+ENV/
+
+# Environment Variables
+.env
+.env.local
+.env.*.local
+
+# IDE
 .idea/
 .vscode/
 *.swp
 *.swo
 
-# Logs
-*.log
-
-# OS specific files
+# OS
 .DS_Store
 Thumbs.db
 
-# Exclude the embedded git repository
+# Project specific
+app keys.txt
 sleepy-panda-tracker/ 
