@@ -681,11 +681,34 @@ def user_profile(user_id):
         # Get user's tokens
         tokens = supabase.table('oura_tokens').select('*').eq('profile_id', user_id).execute()
         if not tokens.data:
-            return {
-                'display_name': profile.data[0]['display_name'],
-                'sleep_data': [],
-                'readiness_data': []
-            }
+            return render_template_string('''
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>User Profile</title>
+                    <style>
+                        body { font-family: Arial, sans-serif; margin: 20px; }
+                        .container { max-width: 800px; margin: 0 auto; }
+                        .card { 
+                            border: 1px solid #ddd; 
+                            padding: 20px; 
+                            margin: 10px 0; 
+                            border-radius: 8px;
+                            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="card">
+                            <h1>{{ display_name }}'s Profile</h1>
+                            <p>This user hasn't connected their Oura Ring yet.</p>
+                            <a href="/dashboard">Back to Dashboard</a>
+                        </div>
+                    </div>
+                </body>
+                </html>
+            ''', display_name=profile.data[0]['display_name'])
 
         # Calculate date range for last 7 days
         end_date = datetime.now().strftime('%Y-%m-%d')
@@ -705,9 +728,9 @@ def user_profile(user_id):
             headers=headers
         )
         
-        sleep_data = []
+        sleep_data = {'data': []}
         if sleep_response.status_code == 200:
-            sleep_data = sleep_response.json().get('data', [])
+            sleep_data = sleep_response.json()
         
         # Get readiness data
         readiness_response = requests.get(
@@ -715,15 +738,166 @@ def user_profile(user_id):
             headers=headers
         )
         
-        readiness_data = []
+        readiness_data = {'data': []}
         if readiness_response.status_code == 200:
-            readiness_data = readiness_response.json().get('data', [])
-        
-        return {
-            'display_name': profile.data[0]['display_name'],
-            'sleep_data': sleep_data,
-            'readiness_data': readiness_data
-        }
+            readiness_data = readiness_response.json()
+
+        return render_template_string('''
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>{{ profile.data[0].display_name }}'s Profile</title>
+                <style>
+                    body { font-family: Arial, sans-serif; margin: 20px; }
+                    .container { max-width: 1200px; margin: 0 auto; }
+                    .card { 
+                        border: 1px solid #ddd; 
+                        padding: 20px; 
+                        margin: 10px 0; 
+                        border-radius: 8px;
+                        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                    }
+                    .sleep-grid {
+                        display: grid;
+                        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+                        gap: 20px;
+                    }
+                    .metric {
+                        margin: 10px 0;
+                    }
+                    .progress-bar {
+                        background-color: #e9ecef;
+                        border-radius: 10px;
+                        height: 15px;
+                        overflow: hidden;
+                        margin: 0 10px;
+                    }
+                    .progress-bar-fill {
+                        background-color: #4CAF50;
+                        height: 100%;
+                        transition: width 0.3s ease;
+                    }
+                    .readiness-metric {
+                        display: flex;
+                        align-items: center;
+                        margin: 8px 0;
+                        padding: 5px;
+                        border-radius: 4px;
+                        background-color: white;
+                    }
+                    .readiness-label {
+                        width: 160px;
+                        font-weight: 500;
+                        color: #333;
+                    }
+                    .readiness-value {
+                        margin-left: 10px;
+                        min-width: 40px;
+                        text-align: right;
+                        font-weight: bold;
+                    }
+                    .metric-group {
+                        margin-bottom: 20px;
+                        padding: 15px;
+                        border-radius: 8px;
+                        background-color: #f8f9fa;
+                    }
+                    h3 { 
+                        color: #2c3e50;
+                        margin-bottom: 15px;
+                        font-size: 1.2em;
+                    }
+                    .date-header {
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        margin-bottom: 15px;
+                        padding-bottom: 10px;
+                        border-bottom: 1px solid #eee;
+                    }
+                    .score-badge {
+                        background-color: #4CAF50;
+                        color: white;
+                        padding: 5px 15px;
+                        border-radius: 20px;
+                        font-weight: bold;
+                        font-size: 0.9em;
+                    }
+                    .back-button {
+                        display: inline-block;
+                        padding: 8px 16px;
+                        background-color: #4CAF50;
+                        color: white;
+                        text-decoration: none;
+                        border-radius: 4px;
+                        margin-bottom: 20px;
+                    }
+                    .back-button:hover {
+                        background-color: #45a049;
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <a href="/dashboard" class="back-button">← Back to Dashboard</a>
+                    
+                    <div class="card">
+                        <h1>{{ profile.data[0].display_name }}'s Profile</h1>
+                    </div>
+
+                    <div class="sleep-grid">
+                    {% for day in sleep_data.get('data', []) %}
+                        <div class="card">
+                            <div class="date-header">
+                                <h3>{{ day['day'] }}</h3>
+                                <span class="score-badge">Score: {{ day.get('score', 0) }}</span>
+                            </div>
+
+                            <div class="metric-group">
+                                <h3>Sleep Metrics</h3>
+                                {% for metric, value in day['contributors'].items() %}
+                                <div class="metric">
+                                    {{ metric.replace('_', ' ').title() }}: {{ value }}
+                                    <div class="progress-bar">
+                                        <div class="progress-bar-fill" style="width: {{ value }}%"></div>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+
+                            {% for readiness_day in readiness_data.get('data', []) %}
+                                {% if readiness_day['day'] == day['day'] %}
+                                <div class="metric-group">
+                                    <h3>Readiness Metrics</h3>
+                                    
+                                    <!-- Main Readiness Score -->
+                                    <div class="readiness-metric">
+                                        <span class="readiness-label">Readiness Score:</span>
+                                        <div class="progress-bar" style="flex-grow: 1;">
+                                            <div class="progress-bar-fill" style="width: {{ readiness_day.get('score', 0) }}%"></div>
+                                        </div>
+                                        <span class="readiness-value">{{ readiness_day.get('score', 0) }}</span>
+                                    </div>
+
+                                    {% for metric, value in readiness_day['contributors'].items() %}
+                                    <div class="readiness-metric">
+                                        <span class="readiness-label">{{ metric.replace('_', ' ').title() }}:</span>
+                                        <div class="progress-bar" style="flex-grow: 1;">
+                                            <div class="progress-bar-fill" style="width: {{ value }}%"></div>
+                                        </div>
+                                        <span class="readiness-value">{{ value }}</span>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+                            {% endfor %}
+                        </div>
+                    {% endfor %}
+                    </div>
+                </div>
+            </body>
+            </html>
+        ''', profile=profile, sleep_data=sleep_data, readiness_data=readiness_data)
         
     except Exception as e:
         print(f"Error in user profile: {str(e)}")
