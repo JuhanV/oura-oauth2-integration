@@ -117,17 +117,26 @@ def callback():
         
         user_info = user_info_response.json()
         
+        # Generate display name from email
+        email = user_info.get('email')
+        display_name = email.split('@')[0] if email else f"User_{datetime.now().strftime('%y%m%d%H%M%S')}"
+        
         # Check if profile exists
         existing_profile = supabase.table('profiles').select('*').eq('oura_user_id', user_info.get('id')).execute()
         
         if existing_profile.data:
             # Update existing profile
             profile_id = existing_profile.data[0]['id']
+            supabase.table('profiles').update({
+                'email': email,
+                'display_name': display_name
+            }).eq('id', profile_id).execute()
         else:
             # Create new profile
             profile_result = supabase.table('profiles').insert({
                 'oura_user_id': user_info.get('id'),
-                'email': user_info.get('email')
+                'email': email,
+                'display_name': display_name
             }).execute()
             profile_id = profile_result.data[0]['id']
         
@@ -160,7 +169,7 @@ def callback():
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    """Display user's Oura Ring data and friend connections."""
+    """Display user's Oura Ring data and global leaderboard."""
     try:
         # Get user's profile and tokens
         profile = supabase.table('profiles').select('*').eq('id', session['profile_id']).execute()
@@ -196,11 +205,8 @@ def dashboard():
         )
         sleep_data = sleep_response.json()
         
-        # Get friend connections with their profiles
-        friends = supabase.table('friendships')\
-            .select('*, friend:profiles!friendships_friend_id_fkey(*)')\
-            .eq('user_id', session['profile_id'])\
-            .execute()
+        # Get all users for the leaderboard
+        all_users = supabase.table('profiles').select('*').execute()
         
         return render_template_string('''
             <!DOCTYPE html>
@@ -236,21 +242,29 @@ def dashboard():
                         height: 100%;
                         transition: width 0.3s ease;
                     }
-                    .friends-section {
+                    .leaderboard {
                         margin-top: 30px;
                     }
-                    .friend-form {
-                        margin: 20px 0;
-                        padding: 20px;
-                        background-color: #f9f9f9;
-                        border-radius: 8px;
+                    .leaderboard-table {
+                        width: 100%;
+                        border-collapse: collapse;
+                        margin-top: 10px;
                     }
-                    input[type="email"] {
-                        padding: 8px;
-                        margin-right: 10px;
-                        border: 1px solid #ddd;
-                        border-radius: 4px;
-                        width: 250px;
+                    .leaderboard-table th,
+                    .leaderboard-table td {
+                        padding: 12px;
+                        text-align: left;
+                        border-bottom: 1px solid #ddd;
+                    }
+                    .leaderboard-table th {
+                        background-color: #f5f5f5;
+                        font-weight: bold;
+                    }
+                    .leaderboard-table tr:hover {
+                        background-color: #f9f9f9;
+                    }
+                    .current-user {
+                        background-color: #e8f5e9;
                     }
                     button {
                         padding: 8px 16px;
@@ -277,11 +291,11 @@ def dashboard():
                     <div class="card">
                         <a href="{{ url_for('logout') }}" class="logout">Logout</a>
                         <h1>Your Oura Ring Dashboard</h1>
-                        <p>Email: {{ personal_info.get('email', 'Not provided') }}</p>
+                        <p>Welcome, {{ profile.data[0].display_name }}!</p>
                     </div>
 
                     <div class="card">
-                        <h2>Sleep Scores (Last 7 Days)</h2>
+                        <h2>Your Sleep Scores (Last 7 Days)</h2>
                         <div class="sleep-grid">
                             {% for day in sleep_data.get('data', []) %}
                             <div class="card">
@@ -305,33 +319,34 @@ def dashboard():
                         </div>
                     </div>
 
-                    <div class="card friends-section">
-                        <h2>Friends</h2>
-                        {% if friends.data %}
-                            <div class="sleep-grid">
-                            {% for friendship in friends.data %}
-                                <div class="card">
-                                    <h3>{{ friendship.friend.email }}</h3>
-                                    <p>Connected since: {{ friendship.created_at[:10] }}</p>
-                                </div>
-                            {% endfor %}
-                            </div>
-                        {% else %}
-                            <p>No friends connected yet. Add friends to compare sleep data!</p>
-                        {% endif %}
-
-                        <div class="friend-form">
-                            <h3>Add a Friend</h3>
-                            <form action="{{ url_for('add_friend') }}" method="post">
-                                <input type="email" name="friend_email" placeholder="Friend's email" required>
-                                <button type="submit">Add Friend</button>
-                            </form>
-                        </div>
+                    <div class="card leaderboard">
+                        <h2>Global Leaderboard</h2>
+                        <p>See how your sleep compares with others!</p>
+                        <table class="leaderboard-table">
+                            <thead>
+                                <tr>
+                                    <th>Rank</th>
+                                    <th>User</th>
+                                    <th>Latest Sleep Score</th>
+                                    <th>Average Sleep Score (7 days)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for user in all_users.data %}
+                                <tr {% if user.id == profile.data[0].id %}class="current-user"{% endif %}>
+                                    <td>{{ loop.index }}</td>
+                                    <td>{{ user.display_name }}</td>
+                                    <td>Coming soon</td>
+                                    <td>Coming soon</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </body>
             </html>
-        ''', personal_info=personal_info, sleep_data=sleep_data, friends=friends)
+        ''', profile=profile, personal_info=personal_info, sleep_data=sleep_data, all_users=all_users)
         
     except Exception as e:
         print(f"Error in dashboard: {str(e)}")
