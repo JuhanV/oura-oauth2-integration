@@ -585,7 +585,11 @@ def dashboard():
                                         {{ loop.index }}
                                         {% endif %}
                                     </td>
-                                    <td>{{ user.display_name }}</td>
+                                    <td>
+                                        <a href="/user/{{ user.user_id }}" style="text-decoration: underline; color: #2563eb;">
+                                            {{ user.display_name }}
+                                        </a>
+                                    </td>
                                     <td>{{ user.latest_score }}</td>
                                     <td>
                                         {{ user.avg_score }}
@@ -663,6 +667,86 @@ def check_tables():
         return f'Tables exist and can be queried: {tables.data}'
     except Exception as e:
         return f'Error checking tables: {str(e)}'
+
+@app.route('/user/<user_id>')
+@login_required
+def user_profile(user_id):
+    """Get a user's profile data including sleep and readiness metrics."""
+    try:
+        # Get user's profile
+        profile = supabase.table('profiles').select('*').eq('id', user_id).execute()
+        if not profile.data:
+            return 'User not found', 404
+
+        # Get user's tokens
+        tokens = supabase.table('oura_tokens').select('*').eq('profile_id', user_id).execute()
+        if not tokens.data:
+            return {
+                'display_name': profile.data[0]['display_name'],
+                'sleep_data': [],
+                'readiness_data': []
+            }
+
+        # Calculate date range for last 7 days
+        end_date = datetime.now().strftime('%Y-%m-%d')
+        start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+
+        # Get access token
+        access_token = decrypt_token(tokens.data[0]['access_token_encrypted'])
+        
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        # Get sleep data
+        sleep_response = requests.get(
+            f"https://api.ouraring.com/v2/usercollection/daily_sleep?start_date={start_date}&end_date={end_date}",
+            headers=headers
+        )
+        
+        sleep_data = []
+        if sleep_response.status_code == 200:
+            sleep_data = sleep_response.json().get('data', [])
+        
+        # Get readiness data
+        readiness_response = requests.get(
+            f"https://api.ouraring.com/v2/usercollection/daily_readiness?start_date={start_date}&end_date={end_date}",
+            headers=headers
+        )
+        
+        readiness_data = []
+        if readiness_response.status_code == 200:
+            readiness_data = readiness_response.json().get('data', [])
+        
+        return {
+            'display_name': profile.data[0]['display_name'],
+            'sleep_data': sleep_data,
+            'readiness_data': readiness_data
+        }
+        
+    except Exception as e:
+        print(f"Error in user profile: {str(e)}")
+        print(traceback.format_exc())
+        return f'Error fetching user profile: {str(e)}', 400
+
+@app.route('/user/<path:path>')
+def serve_react(path):
+    """Serve React app for user profile routes."""
+    return render_template_string('''
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <title>Sleepy Panda Tracker</title>
+        </head>
+        <body>
+            <div id="root"></div>
+            <script type="module" src="/src/main.tsx"></script>
+        </body>
+        </html>
+    ''')
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True) 
