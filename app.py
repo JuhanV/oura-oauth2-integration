@@ -171,16 +171,107 @@ def callback():
 def dashboard():
     """Display user's Oura Ring data and global leaderboard."""
     try:
+        # Calculate date range for sleep data
+        end_date = datetime.now().strftime('%Y-%m-%d')
+        start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+        
         # Get user's profile and tokens
         profile = supabase.table('profiles').select('*').eq('id', session['profile_id']).execute()
         if not profile.data:
             return redirect(url_for('login'))
         
+        # Get all users and their tokens for the leaderboard
+        all_users_with_tokens = supabase.table('profiles')\
+            .select('*, oura_tokens(*)')\
+            .execute()
+            
+        # Prepare leaderboard data
+        leaderboard_data = []
+        
+        for user in all_users_with_tokens.data:
+            try:
+                if not user['oura_tokens']:
+                    continue
+                    
+                # Decrypt token
+                token = decrypt_token(user['oura_tokens'][0]['access_token_encrypted'])
+                
+                headers = {
+                    'Authorization': f'Bearer {token}',
+                    'Content-Type': 'application/json'
+                }
+                
+                sleep_response = requests.get(
+                    f"https://api.ouraring.com/v2/usercollection/daily_sleep?start_date={start_date}&end_date={end_date}",
+                    headers=headers
+                )
+                
+                if sleep_response.status_code == 200:
+                    sleep_data = sleep_response.json()
+                    # Print debug info to understand data structure
+                    print(f"Sleep data for {user['display_name']}: {json.dumps(sleep_data, indent=2)}")
+                    
+                    # Get all valid scores from the data, sorted by date (most recent first)
+                    daily_sleep = sleep_data.get('data', [])
+                    daily_sleep.sort(key=lambda x: x['day'], reverse=True)  # Sort by date, newest first
+                    scores = []
+                    
+                    for day in daily_sleep:
+                        # Get the sleep score directly from the day data
+                        score = day.get('score', None)
+                        
+                        if score is not None:
+                            scores.append(score)
+                            print(f"Found score {score} for day {day['day']}")
+                    
+                    # Print debug info
+                    print(f"User {user['display_name']} - Valid scores found: {scores}")
+                    
+                    # Calculate scores
+                    latest_score = scores[0] if scores else 0  # Most recent score
+                    avg_score = round(sum(scores) / len(scores), 1) if scores else 0
+                    
+                    print(f"User {user['display_name']} - Latest: {latest_score}, Average: {avg_score}")
+                    
+                    leaderboard_data.append({
+                        'user_id': user['id'],
+                        'display_name': user['display_name'],
+                        'latest_score': int(latest_score),  # Convert to integer for cleaner display
+                        'avg_score': avg_score,
+                        'is_current_user': user['id'] == session['profile_id'],
+                        'num_days': len(scores)  # Track how many days of data we have
+                    })
+                else:
+                    # Add user to leaderboard even if API call fails
+                    leaderboard_data.append({
+                        'user_id': user['id'],
+                        'display_name': user['display_name'],
+                        'latest_score': 0,
+                        'avg_score': 0,
+                        'is_current_user': user['id'] == session['profile_id'],
+                        'num_days': 0  # Add num_days field
+                    })
+                        
+            except Exception as e:
+                print(f"Error fetching data for user {user['display_name']}: {str(e)}")
+                # Add user to leaderboard even if there's an error
+                leaderboard_data.append({
+                    'user_id': user['id'],
+                    'display_name': user['display_name'],
+                    'latest_score': 0,
+                    'avg_score': 0,
+                    'is_current_user': user['id'] == session['profile_id'],
+                    'num_days': 0  # Add num_days field
+                })
+        
+        # Sort leaderboard by average score
+        leaderboard_data.sort(key=lambda x: x['avg_score'], reverse=True)
+        
+        # Get current user's sleep data for detailed view
         tokens = supabase.table('oura_tokens').select('*').eq('profile_id', session['profile_id']).execute()
         if not tokens.data:
             return redirect(url_for('login'))
         
-        # Decrypt access token
         access_token = decrypt_token(tokens.data[0]['access_token_encrypted'])
         
         headers = {
@@ -196,18 +287,20 @@ def dashboard():
         personal_info = personal_info_response.json()
         
         # Get sleep data for the last 7 days
-        end_date = datetime.now().strftime('%Y-%m-%d')
-        start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
-        
         sleep_response = requests.get(
             f"https://api.ouraring.com/v2/usercollection/daily_sleep?start_date={start_date}&end_date={end_date}",
             headers=headers
         )
         sleep_data = sleep_response.json()
-        
-        # Get all users for the leaderboard
-        all_users = supabase.table('profiles').select('*').execute()
-        
+
+        # Get readiness data
+        readiness_response = requests.get(
+            f"https://api.ouraring.com/v2/usercollection/daily_readiness?start_date={start_date}&end_date={end_date}",
+            headers=headers
+        )
+        readiness_data = readiness_response.json()
+        print(f"Readiness data: {json.dumps(readiness_data, indent=2)}")
+
         return render_template_string('''
             <!DOCTYPE html>
             <html>
@@ -242,6 +335,40 @@ def dashboard():
                         height: 100%;
                         transition: width 0.3s ease;
                     }
+                    .readiness-metric {
+                        display: flex;
+                        align-items: center;
+                        margin: 10px 0;
+                    }
+                    .readiness-label {
+                        width: 150px;
+                        font-weight: bold;
+                    }
+                    .readiness-value {
+                        margin-left: 10px;
+                    }
+                    .metric-group {
+                        margin-bottom: 20px;
+                        padding-bottom: 10px;
+                        border-bottom: 1px solid #eee;
+                    }
+                    h3 { 
+                        color: #333;
+                        margin-bottom: 15px;
+                    }
+                    .date-header {
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        margin-bottom: 15px;
+                    }
+                    .score-badge {
+                        background-color: #4CAF50;
+                        color: white;
+                        padding: 5px 10px;
+                        border-radius: 15px;
+                        font-weight: bold;
+                    }
                     .leaderboard {
                         margin-top: 30px;
                     }
@@ -266,6 +393,19 @@ def dashboard():
                     .current-user {
                         background-color: #e8f5e9;
                     }
+                    .medal {
+                        display: inline-block;
+                        width: 20px;
+                        height: 20px;
+                        border-radius: 50%;
+                        margin-right: 5px;
+                        text-align: center;
+                        color: white;
+                        font-weight: bold;
+                    }
+                    .gold { background-color: #FFD700; }
+                    .silver { background-color: #C0C0C0; }
+                    .bronze { background-color: #CD7F32; }
                     button {
                         padding: 8px 16px;
                         background-color: #4CAF50;
@@ -294,18 +434,16 @@ def dashboard():
                         <p>Welcome, {{ profile.data[0].display_name }}!</p>
                     </div>
 
-                    <div class="card">
-                        <h2>Your Sleep Scores (Last 7 Days)</h2>
-                        <div class="sleep-grid">
-                            {% for day in sleep_data.get('data', []) %}
-                            <div class="card">
+                    <div class="sleep-grid">
+                    {% for day in sleep_data.get('data', []) %}
+                        <div class="card">
+                            <div class="date-header">
                                 <h3>{{ day['day'] }}</h3>
-                                <div class="metric">
-                                    <strong>Overall Sleep Score: {{ day['score'] }}</strong>
-                                    <div class="progress-bar">
-                                        <div class="progress-bar-fill" style="width: {{ day['score'] }}%"></div>
-                                    </div>
-                                </div>
+                                <span class="score-badge">Score: {{ day.get('score', 0) }}</span>
+                            </div>
+
+                            <div class="metric-group">
+                                <h3>Sleep Metrics</h3>
                                 {% for metric, value in day['contributors'].items() %}
                                 <div class="metric">
                                     {{ metric.replace('_', ' ').title() }}: {{ value }}
@@ -315,12 +453,36 @@ def dashboard():
                                 </div>
                                 {% endfor %}
                             </div>
+
+                            {% for readiness_day in readiness_data.get('data', []) %}
+                                {% if readiness_day['day'] == day['day'] %}
+                                <div class="metric-group">
+                                    <h3>Readiness Metrics</h3>
+                                    <div class="readiness-metric">
+                                        <span class="readiness-label">Readiness Score:</span>
+                                        <div class="progress-bar" style="flex-grow: 1;">
+                                            <div class="progress-bar-fill" style="width: {{ readiness_day.get('score', 0) }}%"></div>
+                                        </div>
+                                        <span class="readiness-value">{{ readiness_day.get('score', 0) }}</span>
+                                    </div>
+                                    {% for metric, value in readiness_day.get('contributors', {}).items() %}
+                                    <div class="readiness-metric">
+                                        <span class="readiness-label">{{ metric.replace('_', ' ').title() }}:</span>
+                                        <div class="progress-bar" style="flex-grow: 1;">
+                                            <div class="progress-bar-fill" style="width: {{ value }}%"></div>
+                                        </div>
+                                        <span class="readiness-value">{{ value }}</span>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
                             {% endfor %}
                         </div>
+                    {% endfor %}
                     </div>
 
                     <div class="card leaderboard">
-                        <h2>Global Leaderboard</h2>
+                        <h2>Global Sleep Score Leaderboard</h2>
                         <p>See how your sleep compares with others!</p>
                         <table class="leaderboard-table">
                             <thead>
@@ -328,16 +490,33 @@ def dashboard():
                                     <th>Rank</th>
                                     <th>User</th>
                                     <th>Latest Sleep Score</th>
-                                    <th>Average Sleep Score (7 days)</th>
+                                    <th>7-Day Average</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {% for user in all_users.data %}
-                                <tr {% if user.id == profile.data[0].id %}class="current-user"{% endif %}>
-                                    <td>{{ loop.index }}</td>
+                                {% for user in leaderboard_data %}
+                                <tr {% if user.is_current_user %}class="current-user"{% endif %}>
+                                    <td>
+                                        {% if loop.index == 1 %}
+                                        <span class="medal gold">1</span>
+                                        {% elif loop.index == 2 %}
+                                        <span class="medal silver">2</span>
+                                        {% elif loop.index == 3 %}
+                                        <span class="medal bronze">3</span>
+                                        {% else %}
+                                        {{ loop.index }}
+                                        {% endif %}
+                                    </td>
                                     <td>{{ user.display_name }}</td>
-                                    <td>Coming soon</td>
-                                    <td>Coming soon</td>
+                                    <td>{{ user.latest_score }}</td>
+                                    <td>
+                                        {{ user.avg_score }}
+                                        {% if user.num_days > 0 %}
+                                        <small style="color: #666">({{ user.num_days }} days)</small>
+                                        {% else %}
+                                        <small style="color: #999">(no data)</small>
+                                        {% endif %}
+                                    </td>
                                 </tr>
                                 {% endfor %}
                             </tbody>
@@ -346,7 +525,7 @@ def dashboard():
                 </div>
             </body>
             </html>
-        ''', profile=profile, personal_info=personal_info, sleep_data=sleep_data, all_users=all_users)
+        ''', profile=profile, personal_info=personal_info, sleep_data=sleep_data, leaderboard_data=leaderboard_data, readiness_data=readiness_data)
         
     except Exception as e:
         print(f"Error in dashboard: {str(e)}")
