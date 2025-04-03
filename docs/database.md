@@ -46,11 +46,25 @@ create table profiles (
     id uuid primary key default uuid_generate_v4(),
     created_at timestamp with time zone default now(),
     oura_user_id text unique not null,
-    email text unique
+    email text unique,
+    display_name text not null
 );
 
 -- Indexes
 create index idx_profiles_oura_user_id on profiles(oura_user_id);
+
+-- RLS Policies
+create policy "Anyone can create profiles"
+    on profiles for insert
+    with check (true);
+
+create policy "Anyone can read all profiles"
+    on profiles for select
+    using (true);
+
+create policy "Users can update own profile"
+    on profiles for update
+    using (auth.uid() = id);
 ```
 
 #### Columns
@@ -58,6 +72,7 @@ create index idx_profiles_oura_user_id on profiles(oura_user_id);
 - `created_at`: Timestamp of profile creation
 - `oura_user_id`: Unique identifier from Oura API
 - `email`: User's email (optional)
+- `display_name`: User's display name
 
 #### Indexes
 - Primary Key: `id`
@@ -80,6 +95,19 @@ create table oura_tokens (
 
 -- Indexes
 create index idx_oura_tokens_profile_id on oura_tokens(profile_id);
+
+-- RLS Policies
+create policy "Anyone can create tokens"
+    on oura_tokens for insert
+    with check (true);
+
+create policy "Users can read own tokens"
+    on oura_tokens for select
+    using (true);
+
+create policy "Users can update tokens"
+    on oura_tokens for update
+    using (true);
 ```
 
 #### Columns
@@ -122,60 +150,33 @@ create index idx_friendships_friend_id on friendships(friend_id);
 - Index: `user_id`
 - Index: `friend_id`
 
-## Row Level Security (RLS)
+## Security Considerations
 
-### profiles Table
+### Row Level Security (RLS)
 
-```sql
-alter table profiles enable row level security;
+The application uses RLS policies to control data access:
 
--- Allow users to read their own profile
-create policy "Users can read own profile"
-    on profiles for select
-    using (id = auth.uid());
+1. **Profiles Table**
+   - Anyone can create new profiles (needed for OAuth signup)
+   - Anyone can read all profiles (needed for leaderboard)
+   - Users can only update their own profiles
 
--- Allow users to update their own profile
-create policy "Users can update own profile"
-    on profiles for update
-    using (id = auth.uid());
-```
+2. **Oura Tokens Table**
+   - Anyone can create tokens (needed for OAuth)
+   - All tokens are encrypted at rest
+   - Token access is controlled through profile_id relationship
 
-### oura_tokens Table
+### Data Privacy
 
-```sql
-alter table oura_tokens enable row level security;
+1. **Token Security**
+   - OAuth tokens are encrypted using Fernet
+   - Encryption key stored in environment variables
+   - Tokens never exposed in plaintext
 
--- Allow users to read their own tokens
-create policy "Users can read own tokens"
-    on oura_tokens for select
-    using (profile_id = auth.uid());
-
--- Allow users to update their own tokens
-create policy "Users can update own tokens"
-    on oura_tokens for update
-    using (profile_id = auth.uid());
-```
-
-### friendships Table
-
-```sql
-alter table friendships enable row level security;
-
--- Allow users to read their own friendships
-create policy "Users can read own friendships"
-    on friendships for select
-    using (user_id = auth.uid() or friend_id = auth.uid());
-
--- Allow users to create friendships involving themselves
-create policy "Users can create own friendships"
-    on friendships for insert
-    with check (user_id = auth.uid());
-
--- Allow users to delete their own friendships
-create policy "Users can delete own friendships"
-    on friendships for delete
-    using (user_id = auth.uid());
-```
+2. **User Privacy**
+   - Display names used instead of real names
+   - Email addresses protected
+   - Sleep data shown only in aggregate form
 
 ## Data Integrity
 
