@@ -8,6 +8,7 @@ import json
 from datetime import datetime, timedelta
 from supabase import create_client, Client
 from functools import wraps
+from cryptography.fernet import Fernet
 
 # Load environment variables
 load_dotenv()
@@ -20,17 +21,29 @@ client_id = os.getenv('OURA_CLIENT_ID')
 client_secret = os.getenv('OURA_CLIENT_SECRET')
 redirect_uri = os.getenv('OURA_REDIRECT_URI')
 
+# Encryption Configuration
+encryption_key = os.getenv('ENCRYPTION_KEY').encode()
+fernet = Fernet(encryption_key)
+
 # Supabase Configuration
 supabase: Client = create_client(
     os.getenv('SUPABASE_URL'),
     os.getenv('SUPABASE_KEY')
 )
 
+def encrypt_token(token: str) -> str:
+    """Encrypt a token using Fernet encryption."""
+    return fernet.encrypt(token.encode()).decode()
+
+def decrypt_token(encrypted_token: str) -> str:
+    """Decrypt a token using Fernet encryption."""
+    return fernet.decrypt(encrypted_token.encode()).decode()
+
 # Login required decorator
 def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        if 'user_id' not in session:
+        if 'profile_id' not in session:
             return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated_function
@@ -38,10 +51,11 @@ def login_required(f):
 @app.route('/')
 def index():
     """Home page with login link."""
-    if 'user_id' in session:
+    if 'profile_id' in session:
         return redirect(url_for('dashboard'))
     return '''
-        <h1>Oura Ring Data Viewer</h1>
+        <h1>Oura Ring Data Comparison</h1>
+        <p>Compare your Oura Ring data with friends!</p>
         <a href="/login">Connect to Oura Ring</a>
     '''
 
@@ -103,29 +117,38 @@ def callback():
         
         user_info = user_info_response.json()
         
-        # Store user and tokens in Supabase
-        user_data = {
-            'oura_user_id': user_info.get('id'),
-            'email': user_info.get('email'),
-            'access_token': token_dict['access_token'],
-            'refresh_token': token_dict.get('refresh_token'),
-            'created_at': datetime.now().isoformat()
+        # Check if profile exists
+        existing_profile = supabase.table('profiles').select('*').eq('oura_user_id', user_info.get('id')).execute()
+        
+        if existing_profile.data:
+            # Update existing profile
+            profile_id = existing_profile.data[0]['id']
+        else:
+            # Create new profile
+            profile_result = supabase.table('profiles').insert({
+                'oura_user_id': user_info.get('id'),
+                'email': user_info.get('email')
+            }).execute()
+            profile_id = profile_result.data[0]['id']
+        
+        # Store/update tokens
+        token_data = {
+            'profile_id': profile_id,
+            'access_token_encrypted': encrypt_token(token_dict['access_token']),
+            'refresh_token_encrypted': encrypt_token(token_dict['refresh_token']) if token_dict.get('refresh_token') else None,
+            'expires_at': (datetime.now() + timedelta(seconds=token_dict['expires_in'])).isoformat(),
+            'scopes': ','.join(token_dict.get('scope', '').split(' '))
         }
         
-        # Check if user exists
-        existing_user = supabase.table('users').select('*').eq('oura_user_id', user_info.get('id')).execute()
-        
-        if existing_user.data:
-            # Update existing user
-            supabase.table('users').update(user_data).eq('oura_user_id', user_info.get('id')).execute()
-            user_id = existing_user.data[0]['id']
+        # Upsert tokens
+        existing_tokens = supabase.table('oura_tokens').select('*').eq('profile_id', profile_id).execute()
+        if existing_tokens.data:
+            supabase.table('oura_tokens').update(token_data).eq('profile_id', profile_id).execute()
         else:
-            # Create new user
-            result = supabase.table('users').insert(user_data).execute()
-            user_id = result.data[0]['id']
+            supabase.table('oura_tokens').insert(token_data).execute()
         
-        # Store user_id in session
-        session['user_id'] = user_id
+        # Store profile_id in session
+        session['profile_id'] = profile_id
         session['oura_user_id'] = user_info.get('id')
         
         return redirect(url_for('dashboard'))
@@ -139,12 +162,18 @@ def callback():
 def dashboard():
     """Display user's Oura Ring data and friend connections."""
     try:
-        # Get user's tokens from Supabase
-        user = supabase.table('users').select('*').eq('id', session['user_id']).execute()
-        if not user.data:
+        # Get user's profile and tokens
+        profile = supabase.table('profiles').select('*').eq('id', session['profile_id']).execute()
+        if not profile.data:
             return redirect(url_for('login'))
         
-        access_token = user.data[0]['access_token']
+        tokens = supabase.table('oura_tokens').select('*').eq('profile_id', session['profile_id']).execute()
+        if not tokens.data:
+            return redirect(url_for('login'))
+        
+        # Decrypt access token
+        access_token = decrypt_token(tokens.data[0]['access_token_encrypted'])
+        
         headers = {
             'Authorization': f'Bearer {access_token}',
             'Content-Type': 'application/json'
@@ -167,36 +196,141 @@ def dashboard():
         )
         sleep_data = sleep_response.json()
         
-        # Get friend connections - Specify the foreign key relationship
-        friends = supabase.table('friendships').select('*, friend:users!friendships_friend_id_fkey(*)').eq('user_id', session['user_id']).execute()
+        # Get friend connections with their profiles
+        friends = supabase.table('friendships')\
+            .select('*, friend:profiles!friendships_friend_id_fkey(*)')\
+            .eq('user_id', session['profile_id'])\
+            .execute()
         
         return render_template_string('''
-            <h1>Welcome to Your Oura Ring Dashboard</h1>
-            <p>Successfully connected to Oura API!</p>
-            
-            <h2>Personal Info</h2>
-            <pre>{{ personal_info | tojson(indent=2) }}</pre>
-            
-            <h2>Sleep Data (Last 7 Days)</h2>
-            <pre>{{ sleep_data | tojson(indent=2) }}</pre>
-            
-            <h2>Friend Connections</h2>
-            {% if friends.data %}
-                <ul>
-                {% for friendship in friends.data %}
-                    <li>{{ friendship.friend.email }}</li>
-                {% endfor %}
-                </ul>
-            {% else %}
-                <p>No friends connected yet.</p>
-            {% endif %}
-            
-            <form action="{{ url_for('add_friend') }}" method="post">
-                <input type="email" name="friend_email" placeholder="Friend's email" required>
-                <button type="submit">Add Friend</button>
-            </form>
-            
-            <a href="{{ url_for('logout') }}">Logout</a>
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Oura Ring Dashboard</title>
+                <style>
+                    body { font-family: Arial, sans-serif; margin: 20px; }
+                    .container { max-width: 1200px; margin: 0 auto; }
+                    .card { 
+                        border: 1px solid #ddd; 
+                        padding: 20px; 
+                        margin: 10px 0; 
+                        border-radius: 8px;
+                        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                    }
+                    .sleep-grid {
+                        display: grid;
+                        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+                        gap: 20px;
+                    }
+                    .metric {
+                        margin: 10px 0;
+                    }
+                    .progress-bar {
+                        background-color: #f0f0f0;
+                        border-radius: 10px;
+                        height: 20px;
+                        overflow: hidden;
+                    }
+                    .progress-bar-fill {
+                        background-color: #4CAF50;
+                        height: 100%;
+                        transition: width 0.3s ease;
+                    }
+                    .friends-section {
+                        margin-top: 30px;
+                    }
+                    .friend-form {
+                        margin: 20px 0;
+                        padding: 20px;
+                        background-color: #f9f9f9;
+                        border-radius: 8px;
+                    }
+                    input[type="email"] {
+                        padding: 8px;
+                        margin-right: 10px;
+                        border: 1px solid #ddd;
+                        border-radius: 4px;
+                        width: 250px;
+                    }
+                    button {
+                        padding: 8px 16px;
+                        background-color: #4CAF50;
+                        color: white;
+                        border: none;
+                        border-radius: 4px;
+                        cursor: pointer;
+                    }
+                    button:hover {
+                        background-color: #45a049;
+                    }
+                    .logout {
+                        float: right;
+                        background-color: #f44336;
+                    }
+                    .logout:hover {
+                        background-color: #da190b;
+                    }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="card">
+                        <a href="{{ url_for('logout') }}" class="logout">Logout</a>
+                        <h1>Your Oura Ring Dashboard</h1>
+                        <p>Email: {{ personal_info.get('email', 'Not provided') }}</p>
+                    </div>
+
+                    <div class="card">
+                        <h2>Sleep Scores (Last 7 Days)</h2>
+                        <div class="sleep-grid">
+                            {% for day in sleep_data.get('data', []) %}
+                            <div class="card">
+                                <h3>{{ day['day'] }}</h3>
+                                <div class="metric">
+                                    <strong>Overall Sleep Score: {{ day['score'] }}</strong>
+                                    <div class="progress-bar">
+                                        <div class="progress-bar-fill" style="width: {{ day['score'] }}%"></div>
+                                    </div>
+                                </div>
+                                {% for metric, value in day['contributors'].items() %}
+                                <div class="metric">
+                                    {{ metric.replace('_', ' ').title() }}: {{ value }}
+                                    <div class="progress-bar">
+                                        <div class="progress-bar-fill" style="width: {{ value }}%"></div>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+
+                    <div class="card friends-section">
+                        <h2>Friends</h2>
+                        {% if friends.data %}
+                            <div class="sleep-grid">
+                            {% for friendship in friends.data %}
+                                <div class="card">
+                                    <h3>{{ friendship.friend.email }}</h3>
+                                    <p>Connected since: {{ friendship.created_at[:10] }}</p>
+                                </div>
+                            {% endfor %}
+                            </div>
+                        {% else %}
+                            <p>No friends connected yet. Add friends to compare sleep data!</p>
+                        {% endif %}
+
+                        <div class="friend-form">
+                            <h3>Add a Friend</h3>
+                            <form action="{{ url_for('add_friend') }}" method="post">
+                                <input type="email" name="friend_email" placeholder="Friend's email" required>
+                                <button type="submit">Add Friend</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </body>
+            </html>
         ''', personal_info=personal_info, sleep_data=sleep_data, friends=friends)
         
     except Exception as e:
@@ -214,20 +348,24 @@ def add_friend():
     
     try:
         # Find friend by email
-        friend = supabase.table('users').select('*').eq('email', friend_email).execute()
+        friend = supabase.table('profiles').select('*').eq('email', friend_email).execute()
         if not friend.data:
-            return 'Friend not found', 404
+            return 'Friend not found. They need to connect their Oura Ring first!', 404
         
         friend_id = friend.data[0]['id']
         
         # Check if friendship already exists
-        existing = supabase.table('friendships').select('*').eq('user_id', session['user_id']).eq('friend_id', friend_id).execute()
+        existing = supabase.table('friendships').select('*')\
+            .eq('user_id', session['profile_id'])\
+            .eq('friend_id', friend_id)\
+            .execute()
+            
         if existing.data:
             return 'Already friends with this user', 400
         
         # Create friendship
         supabase.table('friendships').insert({
-            'user_id': session['user_id'],
+            'user_id': session['profile_id'],
             'friend_id': friend_id,
             'created_at': datetime.now().isoformat()
         }).execute()
@@ -243,6 +381,16 @@ def logout():
     """Clear session and logout."""
     session.clear()
     return redirect(url_for('index'))
+
+@app.route('/check_tables')
+def check_tables():
+    """Check what tables exist in Supabase."""
+    try:
+        # List all tables
+        tables = supabase.table('profiles').select('*').execute()
+        return f'Tables exist and can be queried: {tables.data}'
+    except Exception as e:
+        return f'Error checking tables: {str(e)}'
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True) 
