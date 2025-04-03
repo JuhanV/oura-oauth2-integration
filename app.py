@@ -325,10 +325,11 @@ def dashboard():
                         margin: 10px 0;
                     }
                     .progress-bar {
-                        background-color: #f0f0f0;
+                        background-color: #e9ecef;
                         border-radius: 10px;
-                        height: 20px;
+                        height: 15px;
                         overflow: hidden;
+                        margin: 0 10px;
                     }
                     .progress-bar-fill {
                         background-color: #4CAF50;
@@ -338,36 +339,48 @@ def dashboard():
                     .readiness-metric {
                         display: flex;
                         align-items: center;
-                        margin: 10px 0;
+                        margin: 8px 0;
+                        padding: 5px;
+                        border-radius: 4px;
+                        background-color: white;
                     }
                     .readiness-label {
-                        width: 150px;
-                        font-weight: bold;
+                        width: 160px;
+                        font-weight: 500;
+                        color: #333;
                     }
                     .readiness-value {
                         margin-left: 10px;
+                        min-width: 40px;
+                        text-align: right;
+                        font-weight: bold;
                     }
                     .metric-group {
                         margin-bottom: 20px;
-                        padding-bottom: 10px;
-                        border-bottom: 1px solid #eee;
+                        padding: 15px;
+                        border-radius: 8px;
+                        background-color: #f8f9fa;
                     }
                     h3 { 
-                        color: #333;
+                        color: #2c3e50;
                         margin-bottom: 15px;
+                        font-size: 1.2em;
                     }
                     .date-header {
                         display: flex;
                         justify-content: space-between;
                         align-items: center;
                         margin-bottom: 15px;
+                        padding-bottom: 10px;
+                        border-bottom: 1px solid #eee;
                     }
                     .score-badge {
                         background-color: #4CAF50;
                         color: white;
-                        padding: 5px 10px;
-                        border-radius: 15px;
+                        padding: 5px 15px;
+                        border-radius: 20px;
                         font-weight: bold;
+                        font-size: 0.9em;
                     }
                     .leaderboard {
                         margin-top: 30px;
@@ -458,6 +471,8 @@ def dashboard():
                                 {% if readiness_day['day'] == day['day'] %}
                                 <div class="metric-group">
                                     <h3>Readiness Metrics</h3>
+                                    
+                                    <!-- Main Readiness Score -->
                                     <div class="readiness-metric">
                                         <span class="readiness-label">Readiness Score:</span>
                                         <div class="progress-bar" style="flex-grow: 1;">
@@ -465,15 +480,78 @@ def dashboard():
                                         </div>
                                         <span class="readiness-value">{{ readiness_day.get('score', 0) }}</span>
                                     </div>
-                                    {% for metric, value in readiness_day.get('contributors', {}).items() %}
+
+                                    <!-- Activity Balance -->
                                     <div class="readiness-metric">
-                                        <span class="readiness-label">{{ metric.replace('_', ' ').title() }}:</span>
+                                        <span class="readiness-label">Activity Balance:</span>
                                         <div class="progress-bar" style="flex-grow: 1;">
-                                            <div class="progress-bar-fill" style="width: {{ value }}%"></div>
+                                            <div class="progress-bar-fill" style="width: {{ readiness_day.get('contributors', {}).get('activity_balance', 0) }}%"></div>
                                         </div>
-                                        <span class="readiness-value">{{ value }}</span>
+                                        <span class="readiness-value">{{ readiness_day.get('contributors', {}).get('activity_balance', 0) }}</span>
                                     </div>
-                                    {% endfor %}
+
+                                    <!-- Body Temperature -->
+                                    <div class="readiness-metric">
+                                        <span class="readiness-label">Body Temperature:</span>
+                                        <div class="progress-bar" style="flex-grow: 1;">
+                                            <div class="progress-bar-fill" style="width: {{ readiness_day.get('contributors', {}).get('body_temperature', 0) }}%"></div>
+                                        </div>
+                                        <span class="readiness-value">{{ readiness_day.get('contributors', {}).get('body_temperature', 0) }}</span>
+                                    </div>
+
+                                    <!-- HRV Balance -->
+                                    <div class="readiness-metric">
+                                        <span class="readiness-label">HRV Balance:</span>
+                                        <div class="progress-bar" style="flex-grow: 1;">
+                                            <div class="progress-bar-fill" style="width: {{ readiness_day.get('contributors', {}).get('hrv_balance', 0) }}%"></div>
+                                        </div>
+                                        <span class="readiness-value">{{ readiness_day.get('contributors', {}).get('hrv_balance', 0) }}</span>
+                                    </div>
+
+                                    <!-- Previous Day Activity -->
+                                    <div class="readiness-metric">
+                                        <span class="readiness-label">Previous Day Activity:</span>
+                                        <div class="progress-bar" style="flex-grow: 1;">
+                                            <div class="progress-bar-fill" style="width: {{ readiness_day.get('contributors', {}).get('previous_day_activity', 0) }}%"></div>
+                                        </div>
+                                        <span class="readiness-value">{{ readiness_day.get('contributors', {}).get('previous_day_activity', 0) }}</span>
+                                    </div>
+
+                                    <!-- Previous Night -->
+                                    <div class="readiness-metric">
+                                        <span class="readiness-label">Previous Night:</span>
+                                        <div class="progress-bar" style="flex-grow: 1;">
+                                            <div class="progress-bar-fill" style="width: {{ readiness_day.get('contributors', {}).get('previous_night', 0) }}%"></div>
+                                        </div>
+                                        <span class="readiness-value">{{ readiness_day.get('contributors', {}).get('previous_night', 0) }}</span>
+                                    </div>
+
+                                    <!-- Recovery Index -->
+                                    <div class="readiness-metric">
+                                        <span class="readiness-label">Recovery Index:</span>
+                                        <div class="progress-bar" style="flex-grow: 1;">
+                                            <div class="progress-bar-fill" style="width: {{ readiness_day.get('contributors', {}).get('recovery_index', 0) }}%"></div>
+                                        </div>
+                                        <span class="readiness-value">{{ readiness_day.get('contributors', {}).get('recovery_index', 0) }}</span>
+                                    </div>
+
+                                    <!-- Resting Heart Rate -->
+                                    <div class="readiness-metric">
+                                        <span class="readiness-label">Resting Heart Rate:</span>
+                                        <div class="progress-bar" style="flex-grow: 1;">
+                                            <div class="progress-bar-fill" style="width: {{ readiness_day.get('contributors', {}).get('resting_heart_rate', 0) }}%"></div>
+                                        </div>
+                                        <span class="readiness-value">{{ readiness_day.get('contributors', {}).get('resting_heart_rate', 0) }}</span>
+                                    </div>
+
+                                    <!-- Sleep Balance -->
+                                    <div class="readiness-metric">
+                                        <span class="readiness-label">Sleep Balance:</span>
+                                        <div class="progress-bar" style="flex-grow: 1;">
+                                            <div class="progress-bar-fill" style="width: {{ readiness_day.get('contributors', {}).get('sleep_balance', 0) }}%"></div>
+                                        </div>
+                                        <span class="readiness-value">{{ readiness_day.get('contributors', {}).get('sleep_balance', 0) }}</span>
+                                    </div>
                                 </div>
                                 {% endif %}
                             {% endfor %}
